@@ -320,6 +320,8 @@ kbd { background: #333; padding: 2px 6px; border-radius: 4px; font-family: sans-
 .page > div:first-child { margin-top: 0 !important; }
 .page[data-pn]:not([data-pn="1"])::before { content: attr(data-pn) "."; position: absolute; top: 0.5in; right: 1in; line-height: 12pt; }
 .automore { margin: 0 0 0 1.43in !important; user-select: none; }
+
+.titlepage { width: 8.5in; height: 11in; background: white; box-shadow: 0 10px 30px rgba(0,0,0,0.1); position: relative; box-sizing: border-box; overflow: hidden; flex-shrink: 0; font-family: var(--courier); font-size: 12pt; line-height: 12pt; color: #111; }
 .character.autocue { user-select: none; }
 .character[data-cd]::after { content: " (CONT'D)"; }
 .slugline[data-sg]::after, .character[data-sg]::after, .transition[data-sg]::after { content: attr(data-sg); color: #9aa39c; }

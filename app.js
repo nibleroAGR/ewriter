@@ -262,6 +262,8 @@ function createFolderElement(folder) {
 }
 
 // Event Listeners globales para Dropzones raíz y Context Menu
+scriptTitleEl.addEventListener('input', () => { if (currentScriptId) updateTitlePreview(); });
+
 document.addEventListener('DOMContentLoaded', () => {
     // Context Menu Logic
     const ctxMenu = document.getElementById('folder-context-menu');
@@ -419,6 +421,7 @@ function openScript(id, data) {
     scriptTitleEl.dataset.contact = data.contact || '';
     scriptTitleEl.disabled = false;
     btnTitlePage.disabled = false;
+    updateTitlePreview();
     btnSave.disabled = false;
     btnExportPdf.disabled = false;
     
@@ -490,6 +493,7 @@ btnTitlePage.addEventListener('click', () => {
     if (contact === null) return;
     scriptTitleEl.dataset.author = author.trim();
     scriptTitleEl.dataset.contact = contact;
+    updateTitlePreview();
     saveScript();
 });
 
@@ -498,65 +502,97 @@ btnSave.addEventListener('click', () => {
     showToast('Guion guardado manualmente', 'success');
 });
 
+// HTML de la portada (título, autor y contacto en la misma posición que un guion profesional).
+// La usan tanto la vista previa del editor como la exportación a PDF, para que coincidan siempre.
+function titlePageInnerHTML(title) {
+    const esc = t => { const d = document.createElement('i'); d.textContent = t; return d.innerHTML; };
+    const contact = (scriptTitleEl.dataset.contact || '').split('\n').map(x => x.trim()).filter(Boolean);
+    return `
+        <div style="position:absolute;top:3.25in;left:0;width:100%;text-align:center;font-weight:bold;text-transform:uppercase">${esc(title)}</div>
+        ${scriptTitleEl.dataset.author ? `
+        <div style="position:absolute;top:3.59in;left:0;width:100%;text-align:center">Escrito por</div>
+        <div style="position:absolute;top:3.95in;left:0;width:100%;text-align:center">${esc(scriptTitleEl.dataset.author)}</div>` : ''}
+        ${contact.length ? `<div style="position:absolute;top:8.83in;left:4.96in">${contact.map(esc).join('<br>')}</div>` : ''}`;
+}
+
+// Construye la portada como un elemento de página independiente (8.5x11in) para capturarla en el PDF
+function buildTitlePage(title) {
+    const el = document.createElement('div');
+    el.style.cssText = "width:8.5in;height:11in;position:relative;background:#fff;font-family:'Courier Prime',Courier,monospace;font-size:12pt;line-height:12pt;color:#000;box-sizing:border-box;overflow:hidden";
+    el.innerHTML = titlePageInnerHTML(title);
+    return el;
+}
+
+// Mantiene la portada visible como primera "página" del editor (no editable, no cuenta como página de contenido)
+function updateTitlePreview() {
+    let el = document.getElementById('title-page-preview');
+    if (!currentScriptId) { if (el) el.remove(); return; }
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'title-page-preview';
+        el.className = 'titlepage';
+        pagesContainer.insertBefore(el, pagesContainer.firstChild);
+    } else if (pagesContainer.firstChild !== el) {
+        pagesContainer.insertBefore(el, pagesContainer.firstChild);
+    }
+    el.innerHTML = titlePageInnerHTML(scriptTitleEl.value || 'Guion');
+}
+window.updateTitlePreview = updateTitlePreview;
+
+// Genera el PDF con una imagen por página (una portada + una por cada página del guion),
+// en vez de depender del corte automático de html2pdf, que podía dejar una hoja en blanco.
+async function exportScriptPdf(title) {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ unit: 'in', format: 'letter', orientation: 'portrait' });
+
+    const stage = document.createElement('div');
+    stage.style.cssText = 'position:fixed;left:-9999px;top:0;background:#fff';
+    document.body.appendChild(stage);
+
+    const srcPages = [...pagesContainer.querySelectorAll('.page')];
+    const pages = [buildTitlePage(title), ...srcPages.map(p => {
+        const c = p.cloneNode(true);
+        c.removeAttribute('id'); c.contentEditable = 'false';
+        c.querySelectorAll('[data-sg]').forEach(x => x.removeAttribute('data-sg'));
+        c.style.boxShadow = 'none';
+        c.style.margin = '0';
+        return c;
+    })];
+
+    try {
+        for (let i = 0; i < pages.length; i++) {
+            stage.innerHTML = '';
+            stage.appendChild(pages[i]);
+            const canvas = await html2canvas(pages[i], { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+            const img = canvas.toDataURL('image/jpeg', 0.95);
+            if (i > 0) pdf.addPage('letter', 'portrait');
+            pdf.addImage(img, 'JPEG', 0, 0, 8.5, 11);
+        }
+    } finally {
+        document.body.removeChild(stage);
+    }
+    pdf.save(`${title}.pdf`);
+}
+
 // Botón Exportar PDF
-btnExportPdf.addEventListener('click', () => {
+btnExportPdf.addEventListener('click', async () => {
     if (!currentScriptId) return;
 
     btnExportPdf.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
     btnExportPdf.disabled = true;
 
     const title = scriptTitleEl.value || 'Guion';
-    
-    // Una hoja PDF por cada página del editor (mismo diseño, saltos, (MORE)/(CONT'D) y números),
-    // precedida de una portada con la misma posición que un guion profesional.
-    const exportDiv = document.createElement('div');
-    exportDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:8.5in;background:#fff';
 
-    const titlePage = document.createElement('div');
-    titlePage.style.cssText = "width:8.5in;height:10.98in;position:relative;font-family:'Courier Prime',Courier,monospace;font-size:12pt;line-height:12pt;color:#000;page-break-after:always;box-sizing:border-box";
-    const esc = t => { const d = document.createElement('i'); d.textContent = t; return d.innerHTML; };
-    const contact = (scriptTitleEl.dataset.contact || 'Guion de cortometraje.').split('\n').filter(Boolean);
-    titlePage.innerHTML = `
-        <div style="position:absolute;top:3.25in;left:0;width:100%;text-align:center;font-weight:bold;text-transform:uppercase">${esc(title)}</div>
-        ${scriptTitleEl.dataset.author ? `
-        <div style="position:absolute;top:3.59in;left:0;width:100%;text-align:center">Escrito por</div>
-        <div style="position:absolute;top:3.95in;left:0;width:100%;text-align:center">${esc(scriptTitleEl.dataset.author)}</div>` : ''}
-        ${contact.length ? `<div style="position:absolute;top:8.83in;left:4.96in">${contact.map(esc).join('<br>')}</div>` : ''}`;
-    exportDiv.appendChild(titlePage);
-
-    const src = [...pagesContainer.querySelectorAll('.page')];
-    src.forEach((p, i) => {
-        const c = p.cloneNode(true);
-        c.removeAttribute('id'); c.contentEditable = 'false';
-        c.querySelectorAll('[data-sg]').forEach(x => x.removeAttribute('data-sg'));
-        c.style.cssText = 'box-shadow:none;margin:0;min-height:0;height:10.98in;page-break-after:' + (i < src.length - 1 ? 'always' : 'auto');
-        exportDiv.appendChild(c);
-    });
-    document.body.appendChild(exportDiv);
-
-    window.scrollTo(0, 0);
-
-    const opt = {
-        margin:       0,
-        filename:     `${title}.pdf`,
-        image:        { type: 'jpeg', quality: 0.98 },
-        html2canvas:  { scale: 2, useCORS: true, scrollY: 0 },
-        jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' },
-        pagebreak:    { mode: ['css'] }
-    };
-
-    html2pdf().set(opt).from(exportDiv).save().then(() => {
-        btnExportPdf.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Exportar PDF';
-        btnExportPdf.disabled = false;
-        document.body.removeChild(exportDiv);
+    try {
+        await exportScriptPdf(title);
         showToast('PDF Exportado correctamente', 'success');
-    }).catch(e => {
+    } catch (e) {
         console.error("Error al exportar PDF: ", e);
+        showToast('Error al exportar PDF', 'error');
+    } finally {
         btnExportPdf.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Exportar PDF';
         btnExportPdf.disabled = false;
-        document.body.removeChild(exportDiv);
-        showToast('Error al exportar PDF', 'error');
-    });
+    }
 });
 
 // Autoguardado cada 10 min
