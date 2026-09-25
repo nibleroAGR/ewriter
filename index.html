@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>eWriter Pro</title>
+    <!-- Premium Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Courier+Prime&display=swap" rel="stylesheet">
+    <!-- Icons (FontAwesome) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Lógica y Firebase (Compat para poder abrir en local) -->
+    <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore-compat.js"></script>
+    
+    <script src="app.js" defer></script>
+    <!-- Lógica del Editor de texto (Normal) -->
+    <script src="editor.js" defer></script>
+    
+    <!-- Librería para extraer texto de PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
+    <!-- Librería para exportar a PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body>
+
+    <!-- Pantalla de Login -->
+    <div id="login-section" class="auth-wrapper">
+        <div class="auth-panel glass-panel">
+            <div class="logo">
+                <i class="fa-solid fa-feather-pointed"></i>
+                <h2>eWriter Pro</h2>
+            </div>
+            <p class="subtitle">Tu estudio de guiones en la nube</p>
+
+            <form id="login-form">
+                <div class="input-group">
+                    <i class="fa-solid fa-envelope"></i>
+                    <input type="email" id="email" class="input-estilo" placeholder="Correo electrónico" required>
+                </div>
+                <div class="input-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" id="password" class="input-estilo" placeholder="Contraseña" required>
+                </div>
+                <div id="auth-error" class="error-message"></div>
+                
+                <button type="submit" class="btn btn-primary w-100">Iniciar Sesión / Registrarse</button>
+            </form>
+            <p class="text-sm text-muted" style="text-align: center; margin-top:15px;">Si la cuenta no existe, se creará automáticamente.</p>
+        </div>
+    </div>
+
+    <!-- Pantalla Principal de la App -->
+    <div id="app-section" class="hidden app-wrapper">
+        
+        <!-- Sidebar Izquierdo -->
+        <aside id="sidebar" class="glass-panel">
+            <div class="sidebar-header">
+                <div class="logo-small"><i class="fa-solid fa-feather-pointed"></i> eWriter</div>
+                <button id="btn-logout" class="btn-icon" title="Cerrar sesión"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>Tus Guiones</h3>
+                <button id="btn-new-script" class="btn btn-success w-100 mb-10"><i class="fa-solid fa-plus"></i> Nuevo Guion</button>
+                <div id="script-list" class="script-list">
+                    <!-- Cargado por JS -->
+                </div>
+            </div>
+
+
+            <div class="shortcuts-info mt-auto">
+                <b>Atajos:</b><br>
+                • <kbd>Enter</kbd> Salto lógico<br>
+                • <kbd>Tab</kbd> Rotar estilos<br>
+                • <kbd>Enter</kbd> / <kbd>Espacio</kbd> aceptan la sugerencia gris, <kbd>Esc</kbd> la descarta<br>
+                • Puedes crear una carpeta de seguridad y arrastrar tu guion.<br>
+            </div>
+        </aside>
+
+        <!-- Área Central de Trabajo -->
+        <main id="canvas-area">
+            <header class="editor-header glass-panel">
+                <input type="text" id="script-title" class="title-input" placeholder="Selecciona un guion para empezar..." disabled>
+                <div class="editor-actions">
+                    <span id="save-status" class="text-muted text-sm"><i class="fa-solid fa-cloud"></i> Autoguardado 10min</span>
+                    <button id="btn-save" class="btn btn-primary btn-sm" disabled><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+                    <button id="btn-export-pdf" class="btn btn-success btn-sm" disabled><i class="fa-solid fa-file-pdf"></i> Exportar PDF</button>
+                </div>
+            </header>
+            
+            <div class="format-toolbar glass-panel">
+                <div class="toolbar-group">
+                    <button class="btn-style active" data-type="slugline" onmousedown="event.preventDefault(); applyStyle('slugline')">Encabezado</button>
+                    <button class="btn-style" data-type="action" onmousedown="event.preventDefault(); applyStyle('action')">Acción</button>
+                    <button class="btn-style" data-type="character" onmousedown="event.preventDefault(); applyStyle('character')">Personaje</button>
+                    <button class="btn-style" data-type="parenthetical" onmousedown="event.preventDefault(); applyStyle('parenthetical')">Paréntesis</button>
+                    <button class="btn-style" data-type="dialogue" onmousedown="event.preventDefault(); applyStyle('dialogue')">Diálogo</button>
+                    <button class="btn-style" data-type="transition" onmousedown="event.preventDefault(); applyStyle('transition')">Transición</button>
+                </div>
+                
+                <div class="toolbar-divider"></div>
+                
+                <div class="toolbar-group">
+                    <button class="btn-icon" title="Negrita" onmousedown="event.preventDefault(); document.execCommand('bold', false, null)"><i class="fa-solid fa-bold"></i></button>
+                    <button class="btn-icon" title="Cursiva" onmousedown="event.preventDefault(); document.execCommand('italic', false, null)"><i class="fa-solid fa-italic"></i></button>
+                    <button class="btn-icon" title="Subrayado" onmousedown="event.preventDefault(); document.execCommand('underline', false, null)"><i class="fa-solid fa-underline"></i></button>
+                </div>
+
+                <div class="toolbar-divider"></div>
+
+                <div class="toolbar-group">
+                    <select id="zoom-select" class="zoom-select">
+                        <option value="0.5">50%</option>
+                        <option value="0.75">75%</option>
+                        <option value="1" selected>100%</option>
+                        <option value="1.25">125%</option>
+                        <option value="1.5">150%</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="pages-container" class="editor-container">
+                <!-- Pages will be dynamically created here -->
+                <div class="page" id="editor" contenteditable="false" spellcheck="false">
+                    <div style="text-align: center; color: #999; margin-top: 50px; font-family: sans-serif;">⬅️ Selecciona o crea un guion en el menú lateral.</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Sidebar Derecho (Estadísticas) -->
+        <aside id="right-sidebar" class="glass-panel">
+            <div class="sidebar-header">
+                <h3>Estadísticas</h3>
+            </div>
+            <div class="stats-container">
+                <div class="stat-card">
+                    <i class="fa-regular fa-file-lines"></i>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-pages">0</span>
+                        <span class="stat-label">Páginas</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <i class="fa-solid fa-users"></i>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-chars">0</span>
+                        <span class="stat-label">Personajes</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <i class="fa-solid fa-clapperboard"></i>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-scenes">0</span>
+                        <span class="stat-label">Escenas</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <i class="fa-solid fa-cube"></i>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-objs">0</span>
+                        <span class="stat-label">Objetos</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <i class="fa-solid fa-music"></i>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-music">0</span>
+                        <span class="stat-label">Música</span>
+                    </div>
+                </div>
+            </div>
+            <div id="stat-lists" class="stat-list"></div>
+
+            <hr class="divider-side" style="border-top-color: #e2e8f0; margin-bottom: 15px;">
+            
+            <div class="sidebar-header" style="padding-top: 0; padding-bottom: 10px; display:flex; justify-content: space-between; align-items: center;">
+                <h3>Copia de Seguridad</h3>
+                <button id="btn-new-folder" class="btn-icon" title="Nueva Carpeta"><i class="fa-solid fa-folder-plus"></i></button>
+            </div>
+            
+            <!-- Zona droppable para archivar en la raíz del archivo -->
+            <div id="archive-list" class="archive-list">
+                <!-- Las carpetas y guiones archivados se cargarán aquí -->
+            </div>
+
+        </aside>
+    </div>
+
+    <!-- Context Menu para Carpetas -->
+    <div id="folder-context-menu" class="context-menu hidden">
+        <button id="ctx-rename" class="ctx-item"><i class="fa-solid fa-pen"></i> Renombrar</button>
+        <button id="ctx-delete" class="ctx-item delete"><i class="fa-solid fa-trash"></i> Eliminar</button>
+    </div>
+
+    <!-- Sistema de Notificaciones -->
+    <div id="toast-container" class="toast-container"></div>
+
+</body>
+</html>
