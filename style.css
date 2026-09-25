@@ -151,6 +151,8 @@ kbd { background: #333; padding: 2px 6px; border-radius: 4px; font-family: sans-
     color: var(--text-primary); outline: none; width: 50%;
 }
 .title-input:disabled { opacity: 0.5; }
+#btn-titlepage { font-size: 0.95rem; flex-shrink: 0; }
+#btn-titlepage:disabled { opacity: 0.35; cursor: not-allowed; }
 .editor-actions { display: flex; align-items: center; gap: 20px; }
 
 .editor-container { flex: 1; display: flex; flex-direction: column; align-items: center; overflow-y: auto; padding: 40px 20px; background: #e2e8f0; gap: 40px; transform-origin: top center; transition: transform 0.2s ease; }
@@ -177,20 +179,20 @@ kbd { background: #333; padding: 2px 6px; border-radius: 4px; font-family: sans-
 
 /* Script Formats - Estándar Profesional (Academy / Cole & Haag) */
 /* Doble espacio equivale a una línea en blanco (12pt) */
-.slugline { text-transform: uppercase; margin-top: 12pt !important; margin-bottom: 0 !important; }
+.slugline { text-transform: uppercase; font-weight: bold; margin-top: 12pt !important; margin-bottom: 0 !important; }
 .action { margin-top: 12pt !important; margin-bottom: 0 !important; }
 
 /* El padding-left general del editor es 1.5in, así que restamos 1.5 a las medidas estándar */
 /* Character: estándar 3.7in desde el borde izquierdo del papel -> 3.7 - 1.5 = 2.2in */
-.character { text-transform: uppercase; margin-top: 12pt !important; margin-left: 2.2in !important; margin-bottom: 0 !important; width: 3.8in; }
+.character { text-transform: uppercase; margin-top: 12pt !important; margin-left: 1.91in !important; margin-bottom: 0 !important; width: 3.8in; }
 
 /* Parenthetical: estándar 3.1in desde el borde izquierdo del papel -> 3.1 - 1.5 = 1.6in */
-.parenthetical { margin-top: 0 !important; margin-bottom: 0 !important; margin-left: 1.6in !important; width: 2in; }
+.parenthetical { margin-top: 0 !important; margin-bottom: 0 !important; margin-left: 1.43in !important; width: 2.3in; }
 .parenthetical::before { content: "("; }
 .parenthetical::after { content: ")"; }
 
 /* Dialogue: estándar 2.5in desde el borde izquierdo del papel -> 2.5 - 1.5 = 1.0in */
-.dialogue { margin-top: 0 !important; margin-bottom: 0 !important; margin-left: 1.0in !important; width: 3.5in; }
+.dialogue { margin-top: 0 !important; margin-bottom: 0 !important; margin-left: 0.91in !important; width: 3.7in; }
 
 /* Transition: Alineado a la derecha, típicamente a 1 pulgada del margen derecho (que coincide con el contenedor) */
 .transition { text-transform: uppercase; text-align: right; margin-top: 12pt !important; margin-bottom: 0 !important; width: 100%; }
@@ -317,7 +319,7 @@ kbd { background: #333; padding: 2px 6px; border-radius: 4px; font-family: sans-
 /* ===== Paginación real, (MORE)/(CONT'D), sugerencias y estadísticas ampliadas ===== */
 .page > div:first-child { margin-top: 0 !important; }
 .page[data-pn]:not([data-pn="1"])::before { content: attr(data-pn) "."; position: absolute; top: 0.5in; right: 1in; line-height: 12pt; }
-.automore { margin: 0 0 0 2.2in !important; user-select: none; }
+.automore { margin: 0 0 0 1.43in !important; user-select: none; }
 .character.autocue { user-select: none; }
 .character[data-cd]::after { content: " (CONT'D)"; }
 .slugline[data-sg]::after, .character[data-sg]::after, .transition[data-sg]::after { content: attr(data-sg); color: #9aa39c; }

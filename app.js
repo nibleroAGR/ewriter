@@ -28,6 +28,7 @@ const authError = document.getElementById('auth-error');
 const scriptListEl = document.getElementById('script-list');
 const pagesContainer = document.getElementById('pages-container');
 const scriptTitleEl = document.getElementById('script-title');
+const btnTitlePage = document.getElementById('btn-titlepage');
 const btnSave = document.getElementById('btn-save');
 const btnExportPdf = document.getElementById('btn-export-pdf');
 const saveStatus = document.getElementById('save-status');
@@ -384,6 +385,8 @@ document.getElementById('btn-new-script').addEventListener('click', async () => 
     const docRef = await newRef.add({
         title: 'Nuevo Guion',
         content: '<div class="slugline">INT. ESCENA - DÍA</div><div class="action">Describe la acción...</div>',
+        author: currentUser.displayName || '',
+        contact: '',
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -412,7 +415,10 @@ function openScript(id, data) {
         setTimeout(() => window.reflowPagination(firstPage), 50);
     }
     scriptTitleEl.value = data.title || '';
+    scriptTitleEl.dataset.author = data.author || (currentUser.displayName || '');
+    scriptTitleEl.dataset.contact = data.contact || '';
     scriptTitleEl.disabled = false;
+    btnTitlePage.disabled = false;
     btnSave.disabled = false;
     btnExportPdf.disabled = false;
     
@@ -436,7 +442,10 @@ function resetEditor() {
         </div>
     `;
     scriptTitleEl.value = '';
+    scriptTitleEl.dataset.author = '';
+    scriptTitleEl.dataset.contact = '';
     scriptTitleEl.disabled = true;
+    btnTitlePage.disabled = true;
     btnSave.disabled = true;
     btnExportPdf.disabled = true;
     stopAutoSave();
@@ -456,6 +465,8 @@ async function saveScript() {
         await db.doc(`users/${currentUser.uid}/scripts/${currentScriptId}`).update({
             title: title,
             content: content,
+            author: scriptTitleEl.dataset.author || '',
+            contact: scriptTitleEl.dataset.contact || '',
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
         
@@ -471,6 +482,17 @@ async function saveScript() {
 }
 
 // Boton guardar manual
+btnTitlePage.addEventListener('click', () => {
+    if (!currentScriptId) return;
+    const author = prompt('Autor o autora (aparece bajo "Escrito por"):', scriptTitleEl.dataset.author || '');
+    if (author === null) return;
+    const contact = prompt('Datos de contacto (una línea, o varias separadas por salto de línea):', scriptTitleEl.dataset.contact || '');
+    if (contact === null) return;
+    scriptTitleEl.dataset.author = author.trim();
+    scriptTitleEl.dataset.contact = contact;
+    saveScript();
+});
+
 btnSave.addEventListener('click', () => {
     saveScript();
     showToast('Guion guardado manualmente', 'success');
@@ -485,9 +507,23 @@ btnExportPdf.addEventListener('click', () => {
 
     const title = scriptTitleEl.value || 'Guion';
     
-    // Una hoja PDF por cada página del editor (mismo diseño, saltos, (MORE)/(CONT'D) y números)
+    // Una hoja PDF por cada página del editor (mismo diseño, saltos, (MORE)/(CONT'D) y números),
+    // precedida de una portada con la misma posición que un guion profesional.
     const exportDiv = document.createElement('div');
     exportDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:8.5in;background:#fff';
+
+    const titlePage = document.createElement('div');
+    titlePage.style.cssText = "width:8.5in;height:10.98in;position:relative;font-family:'Courier Prime',Courier,monospace;font-size:12pt;line-height:12pt;color:#000;page-break-after:always;box-sizing:border-box";
+    const esc = t => { const d = document.createElement('i'); d.textContent = t; return d.innerHTML; };
+    const contact = (scriptTitleEl.dataset.contact || 'Guion de cortometraje.').split('\n').filter(Boolean);
+    titlePage.innerHTML = `
+        <div style="position:absolute;top:3.25in;left:0;width:100%;text-align:center;font-weight:bold;text-transform:uppercase">${esc(title)}</div>
+        ${scriptTitleEl.dataset.author ? `
+        <div style="position:absolute;top:3.59in;left:0;width:100%;text-align:center">Escrito por</div>
+        <div style="position:absolute;top:3.95in;left:0;width:100%;text-align:center">${esc(scriptTitleEl.dataset.author)}</div>` : ''}
+        ${contact.length ? `<div style="position:absolute;top:8.83in;left:4.96in">${contact.map(esc).join('<br>')}</div>` : ''}`;
+    exportDiv.appendChild(titlePage);
+
     const src = [...pagesContainer.querySelectorAll('.page')];
     src.forEach((p, i) => {
         const c = p.cloneNode(true);

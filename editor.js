@@ -1,5 +1,5 @@
 // Lógica del Editor de Guiones (Formatos, Atajos y Paginación)
-const pagesContainer = document.getElementById('pages-container');
+// pagesContainer ya lo declara app.js (se carga antes) — reutilizamos esa misma variable global.
 const styles = ['slugline', 'action', 'character', 'parenthetical', 'dialogue', 'transition'];
 
 const flowMap = {
