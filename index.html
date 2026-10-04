@@ -70,6 +70,7 @@
         <!-- Barra superior -->
         <header class="topbar">
             <div class="topbar-left">
+                <button id="btn-toggle-left" class="btn-icon panel-toggle" title="Guiones y escenas"><i class="fa-solid fa-bars"></i></button>
                 <div class="logo-small"><i class="fa-solid fa-feather-pointed"></i> eWriter</div>
                 <span class="topbar-sep"></span>
                 <input type="text" id="script-title" class="title-input" placeholder="Selecciona un guion para empezar" disabled>
@@ -85,6 +86,7 @@
                         <button id="btn-export-fountain" class="dropdown-item"><i class="fa-solid fa-file-lines"></i> Fountain (.fountain)</button>
                     </div>
                 </div>
+                <button id="btn-toggle-right" class="btn-icon panel-toggle" title="Resumen y copia de seguridad"><i class="fa-solid fa-chart-simple"></i></button>
                 <div class="menu-wrap">
                     <button id="user-chip" class="user-chip" title="Tu cuenta">
                         <img id="user-avatar" alt="" class="hidden">
@@ -169,6 +171,8 @@
                     </div>
                 </div>
             </main>
+
+            <div class="panel-backdrop" id="panel-backdrop"></div>
 
             <!-- Panel derecho -->
             <aside id="right-sidebar">

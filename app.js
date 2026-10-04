@@ -114,9 +114,12 @@ auth.onAuthStateChanged((user) => {
 });
 
 // Resultado de un acceso por redirección (cuando el navegador bloquea la ventana emergente)
-auth.getRedirectResult().catch(err => {
-    if (err && err.code) authError.textContent = authMessage(err);
-});
+// (solo en http/https: en file:// daría un error nada más abrir la página)
+if (location.protocol.startsWith('http')) {
+    auth.getRedirectResult().catch(err => {
+        if (err && err.code) authError.textContent = authMessage(err);
+    });
+}
 
 btnGoogle.addEventListener('click', async () => {
     authError.textContent = '';
@@ -736,7 +739,7 @@ tpDialog.addEventListener('close', () => {
         scriptTitleEl.dataset.contact = tpContact.value.replace(/\s+$/g, '');
         // "author" se mantiene para compatibilidad: la última línea de los créditos
         const lines = scriptTitleEl.dataset.credit.split('\n').map(x => x.trim()).filter(Boolean);
-        scriptTitleEl.dataset.author = lines.length > 1 ? lines[lines.length - 1] : (lines[0] || '');
+        scriptTitleEl.dataset.author = lines.length > 1 ? lines[1] : (lines[0] || ''); // p. ej. «Escrito por» / «Ana García»
         saveScript();
         showToast('Portada actualizada', 'success');
     } else if (tpBackup) {
@@ -1004,3 +1007,16 @@ document.addEventListener('keydown', (e) => {
 
 // Guardar al cerrar la pestaña (mejor esfuerzo)
 window.addEventListener('beforeunload', () => { if (currentScriptId) saveScript(); });
+
+// ---------- Paneles laterales en móvil / pantallas estrechas ----------
+document.getElementById('btn-toggle-left').addEventListener('click', () => {
+    document.body.classList.remove('show-right'); document.body.classList.toggle('show-left');
+});
+document.getElementById('btn-toggle-right').addEventListener('click', () => {
+    document.body.classList.remove('show-left'); document.body.classList.toggle('show-right');
+});
+document.getElementById('panel-backdrop').addEventListener('click', () => document.body.classList.remove('show-left', 'show-right'));
+// Al abrir un guion o saltar a una escena en móvil, cerrar el panel
+document.getElementById('sidebar').addEventListener('click', (e) => {
+    if (window.innerWidth <= 820 && e.target.closest('.script-item span, #scene-list li')) document.body.classList.remove('show-left');
+});

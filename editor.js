@@ -64,12 +64,24 @@ const zoomSelect = document.getElementById('zoom-select');
 if(zoomSelect) {
     zoomSelect.addEventListener('change', (e) => {
         const val = e.target.value;
-        pagesContainer.style.transform = `scale(${val})`;
+        // 'zoom' (no 'transform') para que el contenido ampliado se pueda desplazar entero
+        pagesContainer.style.zoom = val;
     });
 }
 
 // ==================== LÓGICA DE TECLADO ====================
+// Sincroniza el bloque activo con la selección real. 'selectionchange' es asíncrono,
+// así que si se teclea justo después de un clic el bloque guardado podía ser el anterior.
+function syncFocus() {
+    const s = getSelection(); if (!s || !s.rangeCount) return;
+    let n = s.anchorNode;
+    if (n && n.nodeType === 1 && n.classList && n.classList.contains('page')) n = n.childNodes[s.anchorOffset] || n.lastElementChild;
+    const b = blockOf(n);
+    if (b && !/auto(more|cue)/.test(b.className) && b !== currentFocusBlock) { currentFocusBlock = b; updateActiveButton(b.className); }
+}
+
 pagesContainer.addEventListener('keydown', (e) => {
+    syncFocus();
     if (!currentFocusBlock) return;
     if (e.key === 'Enter' || e.key === 'Tab') healAll();
     if (!currentFocusBlock) return;
@@ -137,6 +149,7 @@ pagesContainer.addEventListener('keydown', (e) => {
 // ==================== PAGINACIÓN (EL NÚCLEO) ====================
 pagesContainer.addEventListener('beforeinput', () => healAll());
 pagesContainer.addEventListener('input', (e) => {
+    syncFocus();
     autoConvert(currentFocusBlock);
     const page = e.target.closest('.page');
     if (needAll) flushAll(); else if (page) checkPagination(page);
