@@ -263,6 +263,7 @@ function createScriptElement(script) {
 }
 
 let activeFolderCtxId = null;
+const openFolders = new Set(); // recuerda qué carpetas están abiertas al repintar
 
 function createFolderElement(folder) {
     const div = document.createElement('div');
@@ -272,12 +273,16 @@ function createFolderElement(folder) {
     div.innerHTML = `
         <div class="folder-header">
             <div class="folder-title">
-                <i class="fa-solid fa-folder"></i> 
-                <span>${escHTML(folder.name)}</span>
+                <i class="fa-solid ${openFolders.has(folder.id) ? 'fa-folder-open' : 'fa-folder'}"></i>
+                <span class="folder-name">${escHTML(folder.name)}</span>
             </div>
-            <i class="fa-solid fa-chevron-down" style="font-size:0.7rem; color:#94a3b8;"></i>
+            <div class="folder-actions">
+                <button class="folder-btn" data-act="rename" title="Renombrar carpeta"><i class="fa-solid fa-pen"></i></button>
+                <button class="folder-btn danger" data-act="delete" title="Eliminar carpeta"><i class="fa-solid fa-trash"></i></button>
+                <i class="fa-solid fa-chevron-${openFolders.has(folder.id) ? 'up' : 'down'} folder-chevron"></i>
+            </div>
         </div>
-        <div class="folder-content" id="folder-content-${folder.id}"></div>
+        <div class="folder-content ${openFolders.has(folder.id) ? 'open' : ''}" id="folder-content-${folder.id}"></div>
     `;
 
     const header = div.querySelector('.folder-header');
@@ -336,19 +341,116 @@ function createFolderElement(folder) {
         }
     });
 
-    // Expand/Collapse folder
-    div.querySelector('.folder-header').addEventListener('click', () => {
+    // Botones visibles de renombrar / eliminar
+    div.querySelector('[data-act="rename"]').addEventListener('click', (e) => { e.stopPropagation(); startFolderRename(folder.id); });
+    div.querySelector('[data-act="delete"]').addEventListener('click', (e) => { e.stopPropagation(); deleteFolder(folder.id); });
+    header.addEventListener('dblclick', (e) => { e.stopPropagation(); startFolderRename(folder.id); });
+
+    // Abrir / cerrar carpeta
+    header.addEventListener('click', (e) => {
+        if (e.target.closest('.folder-rename-input')) return;
         const content = div.querySelector('.folder-content');
-        content.classList.toggle('open');
-        const icon = div.querySelector('.fa-chevron-down');
-        if(content.classList.contains('open')) {
-            icon.classList.replace('fa-chevron-down', 'fa-chevron-up');
-        } else {
-            icon.classList.replace('fa-chevron-up', 'fa-chevron-down');
-        }
+        const open = content.classList.toggle('open');
+        open ? openFolders.add(folder.id) : openFolders.delete(folder.id);
+        div.querySelector('.folder-chevron').className = `fa-solid fa-chevron-${open ? 'up' : 'down'} folder-chevron`;
+        div.querySelector('.folder-title i').className = `fa-solid ${open ? 'fa-folder-open' : 'fa-folder'}`;
     });
 
     return div;
+}
+
+// ---------- Renombrar carpeta (en el sitio) ----------
+function startFolderRename(folderId) {
+    const item = document.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
+    const folder = allFolders.find(f => f.id === folderId);
+    if (!item || !folder || item.querySelector('.folder-rename-input')) return;
+    const nameEl = item.querySelector('.folder-name');
+    const input = document.createElement('input');
+    input.className = 'folder-rename-input';
+    input.value = folder.name || '';
+    input.maxLength = 60;
+    nameEl.replaceWith(input);
+    input.focus(); input.select();
+
+    let done = false;
+    const finish = async (save) => {
+        if (done) return; done = true;
+        const name = input.value.trim();
+        if (save && name && name !== folder.name) {
+            await db.doc(`users/${currentUser.uid}/folders/${folderId}`).update({
+                name, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            showToast('Carpeta renombrada', 'success');
+        } else {
+            input.replaceWith(nameEl); // sin cambios
+        }
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('click', e => e.stopPropagation());
+}
+
+// ---------- Eliminar carpeta ----------
+async function deleteFolder(folderId) {
+    const folder = allFolders.find(f => f.id === folderId);
+    if (!folder || !currentUser) return;
+    const inside = allScripts.filter(s => s.folderId === folderId);
+    const base = `users/${currentUser.uid}`;
+    const ts = firebase.firestore.FieldValue.serverTimestamp();
+
+    let choice;
+    if (!inside.length) {
+        choice = await askDialog(`¿Eliminar la carpeta «${folder.name}»?`, 'Está vacía.', [
+            { id: 'folder', label: 'Eliminar carpeta', danger: true }
+        ]);
+    } else {
+        choice = await askDialog(`¿Eliminar la carpeta «${folder.name}»?`,
+            `Contiene ${inside.length} ${inside.length === 1 ? 'guion' : 'guiones'}. Puedes conservarlos en Copia de seguridad o borrarlos con la carpeta.`, [
+            { id: 'keep', label: 'Eliminar carpeta y conservar guiones' },
+            { id: 'all', label: 'Eliminar carpeta y guiones', danger: true }
+        ]);
+    }
+    if (!choice) return;
+
+    const batch = db.batch();
+    inside.forEach(s => {
+        const ref = db.doc(`${base}/scripts/${s.id}`);
+        if (choice === 'all') batch.delete(ref);
+        else batch.update(ref, { folderId: null, isArchived: true, updatedAt: ts });
+    });
+    batch.delete(db.doc(`${base}/folders/${folderId}`));
+    await batch.commit();
+    openFolders.delete(folderId);
+    if (choice === 'all' && inside.some(s => s.id === currentScriptId)) resetEditor();
+    showToast('Carpeta eliminada', 'info');
+}
+
+// ---------- Diálogo de confirmación reutilizable ----------
+function askDialog(title, text, actions) {
+    return new Promise(resolve => {
+        const dlg = document.getElementById('confirm-dialog');
+        dlg.querySelector('.dlg-title').textContent = title;
+        dlg.querySelector('.dlg-text').textContent = text;
+        const box = dlg.querySelector('.dlg-actions');
+        box.innerHTML = '';
+        const cancel = document.createElement('button');
+        cancel.className = 'btn btn-ghost'; cancel.textContent = 'Cancelar';
+        cancel.onclick = () => dlg.close('');
+        box.appendChild(cancel);
+        actions.forEach(a => {
+            const b = document.createElement('button');
+            b.className = 'btn ' + (a.danger ? 'btn-danger' : 'btn-primary');
+            b.textContent = a.label;
+            b.onclick = () => dlg.close(a.id);
+            box.appendChild(b);
+        });
+        dlg.onclose = () => resolve(dlg.returnValue || null);
+        dlg.returnValue = '';
+        dlg.showModal();
+    });
 }
 
 // Event Listeners globales para Dropzones raíz y Context Menu
@@ -368,29 +470,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        ctxRename.addEventListener('click', async () => {
-            if(!activeFolderCtxId || !currentUser) return;
-            const newName = prompt('Nuevo nombre de la carpeta:');
-            if(newName) {
-                await db.doc(`users/${currentUser.uid}/folders/${activeFolderCtxId}`).update({
-                    name: newName,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            }
+        ctxRename.addEventListener('click', () => {
+            const id = activeFolderCtxId;
             ctxMenu.classList.add('hidden');
+            if (id) startFolderRename(id);
         });
 
-        ctxDelete.addEventListener('click', async () => {
-            if(!activeFolderCtxId || !currentUser) return;
-            if(confirm('¿Eliminar esta carpeta de seguridad y todas las copias en su interior? No se puede deshacer.')) {
-                const scriptsInFolder = allScripts.filter(s => s.folderId === activeFolderCtxId);
-                for(let s of scriptsInFolder) {
-                    await db.doc(`users/${currentUser.uid}/scripts/${s.id}`).delete();
-                }
-                await db.doc(`users/${currentUser.uid}/folders/${activeFolderCtxId}`).delete();
-                showToast('Carpeta eliminada', 'info');
-            }
+        ctxDelete.addEventListener('click', () => {
+            const id = activeFolderCtxId;
             ctxMenu.classList.add('hidden');
+            if (id) deleteFolder(id);
         });
     }
 
@@ -460,12 +549,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnNewFolder) {
         btnNewFolder.addEventListener('click', async () => {
             if(!currentUser) return;
-            const name = prompt('Nombre de la nueva carpeta:');
-            if(!name) return;
-            await db.collection(`users/${currentUser.uid}/folders`).add({
-                name: name,
+            const ref = await db.collection(`users/${currentUser.uid}/folders`).add({
+                name: 'Nueva carpeta',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
+            // Cuando aparezca en la lista, se abre directamente para escribirle el nombre
+            const wait = setInterval(() => {
+                if (document.querySelector(`.folder-item[data-folder-id="${ref.id}"]`)) {
+                    clearInterval(wait); startFolderRename(ref.id);
+                }
+            }, 50);
+            setTimeout(() => clearInterval(wait), 3000);
         });
     }
 });
@@ -505,6 +599,10 @@ function openScript(id, data) {
     scriptTitleEl.value = data.title || '';
     scriptTitleEl.dataset.author = data.author || (currentUser.displayName || '');
     scriptTitleEl.dataset.contact = data.contact || '';
+    // Créditos bajo el título (hasta 3 líneas). Guiones antiguos: "Escrito por" + autor.
+    scriptTitleEl.dataset.credit = typeof data.credit === 'string'
+        ? data.credit
+        : (scriptTitleEl.dataset.author ? `Escrito por\n${scriptTitleEl.dataset.author}` : '');
     scriptTitleEl.disabled = false;
     btnTitlePage.disabled = false;
     updateTitlePreview();
@@ -534,6 +632,7 @@ function resetEditor() {
     scriptTitleEl.value = '';
     scriptTitleEl.dataset.author = '';
     scriptTitleEl.dataset.contact = '';
+    scriptTitleEl.dataset.credit = '';
     scriptTitleEl.disabled = true;
     btnTitlePage.disabled = true;
     btnSave.disabled = true;
@@ -559,7 +658,8 @@ async function saveScript() {
             content: content,                 // HTML (conserva negrita/cursiva)
             elements: elements,               // Estructura estándar: [{ type, text }]
             author: scriptTitleEl.dataset.author || '',
-            contact: scriptTitleEl.dataset.contact || '',
+            credit: scriptTitleEl.dataset.credit || '',   // hasta 3 líneas bajo el título
+            contact: scriptTitleEl.dataset.contact || '', // hasta 3 líneas abajo a la derecha
             format: 'screenplay',
             schemaVersion: 2,
             ownerId: currentUser.uid,
@@ -583,16 +683,68 @@ async function saveScript() {
 }
 
 // Boton guardar manual
-btnTitlePage.addEventListener('click', () => {
+// ---------- Editor de portada ----------
+const TP_MAX_LINES = 3;
+const TP_MAX_CHARS = { credit: 60, contact: 40 }; // lo que cabe en la portada en Courier 12pt
+const tpDialog = document.getElementById('titlepage-dialog');
+const tpCredit = document.getElementById('tp-credit');
+const tpContact = document.getElementById('tp-contact');
+
+// Limita a 3 líneas y a un ancho máximo por línea
+function clampLines(text, maxChars) {
+    return text.split('\n').slice(0, TP_MAX_LINES).map(l => l.slice(0, maxChars)).join('\n');
+}
+function setupTpField(ta, key) {
+    const counter = document.querySelector(`[data-count="${key}"]`);
+    const refresh = () => {
+        const n = ta.value ? ta.value.split('\n').length : 0;
+        counter.textContent = `${n}/${TP_MAX_LINES} líneas`;
+        counter.classList.toggle('full', n >= TP_MAX_LINES);
+    };
+    ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && ta.value.split('\n').length >= TP_MAX_LINES) e.preventDefault();
+    });
+    ta.addEventListener('input', () => {
+        const pos = ta.selectionStart, clamped = clampLines(ta.value, TP_MAX_CHARS[key]);
+        if (clamped !== ta.value) { ta.value = clamped; ta.selectionStart = ta.selectionEnd = Math.min(pos, clamped.length); }
+        refresh();
+        // Vista previa en vivo sobre la portada
+        scriptTitleEl.dataset[key] = ta.value;
+        updateTitlePreview();
+    });
+    ta._refresh = refresh;
+}
+setupTpField(tpCredit, 'credit');
+setupTpField(tpContact, 'contact');
+
+let tpBackup = null;
+function openTitlePageEditor() {
     if (!currentScriptId) return;
-    const author = prompt('Autor o autora (aparece bajo "Escrito por"):', scriptTitleEl.dataset.author || '');
-    if (author === null) return;
-    const contact = prompt('Datos de contacto (una línea, o varias separadas por salto de línea):', scriptTitleEl.dataset.contact || '');
-    if (contact === null) return;
-    scriptTitleEl.dataset.author = author.trim();
-    scriptTitleEl.dataset.contact = contact;
+    tpBackup = { credit: scriptTitleEl.dataset.credit || '', contact: scriptTitleEl.dataset.contact || '' };
+    tpCredit.value = clampLines(tpBackup.credit, TP_MAX_CHARS.credit);
+    tpContact.value = clampLines(tpBackup.contact, TP_MAX_CHARS.contact);
+    tpCredit._refresh(); tpContact._refresh();
+    tpDialog.showModal();
+    tpCredit.focus();
+}
+btnTitlePage.addEventListener('click', openTitlePageEditor);
+document.getElementById('tp-cancel').addEventListener('click', () => tpDialog.close('cancel'));
+document.getElementById('tp-save').addEventListener('click', () => tpDialog.close('save'));
+tpDialog.addEventListener('close', () => {
+    if (tpDialog.returnValue === 'save') {
+        scriptTitleEl.dataset.credit = tpCredit.value.replace(/\s+$/g, '');
+        scriptTitleEl.dataset.contact = tpContact.value.replace(/\s+$/g, '');
+        // "author" se mantiene para compatibilidad: la última línea de los créditos
+        const lines = scriptTitleEl.dataset.credit.split('\n').map(x => x.trim()).filter(Boolean);
+        scriptTitleEl.dataset.author = lines.length > 1 ? lines[lines.length - 1] : (lines[0] || '');
+        saveScript();
+        showToast('Portada actualizada', 'success');
+    } else if (tpBackup) {
+        scriptTitleEl.dataset.credit = tpBackup.credit;
+        scriptTitleEl.dataset.contact = tpBackup.contact;
+    }
+    tpDialog.returnValue = '';
     updateTitlePreview();
-    saveScript();
 });
 
 btnSave.addEventListener('click', () => {
@@ -604,13 +756,22 @@ btnSave.addEventListener('click', () => {
 // La usan tanto la vista previa del editor como la exportación a PDF, para que coincidan siempre.
 function titlePageInnerHTML(title) {
     const esc = t => { const d = document.createElement('i'); d.textContent = t; return d.innerHTML; };
-    const contact = (scriptTitleEl.dataset.contact || '').split('\n').map(x => x.trim()).filter(Boolean);
+    const lines = v => (v || '').split('\n').map(x => x.trim()).slice(0, 3);
+    const credit = lines(scriptTitleEl.dataset.credit);
+    const contact = lines(scriptTitleEl.dataset.contact);
+    while (contact.length && !contact[contact.length - 1]) contact.pop();
+    // Créditos: una línea cada 0.36in bajo el título (como "Escrito por" / nombre)
+    const creditHTML = credit.map((l, i) => l
+        ? `<div style="position:absolute;top:${(3.59 + i * 0.36).toFixed(2)}in;left:1in;right:1in;text-align:center;white-space:pre">${esc(l)}</div>`
+        : '').join('');
+    // Información abajo a la derecha: bloque alineado a la izquierda que termina en el margen derecho
+    const contactHTML = contact.length
+        ? `<div style="position:absolute;top:8.83in;right:1in;text-align:left;white-space:pre">${contact.map(esc).join('<br>')}</div>`
+        : '';
     return `
-        <div style="position:absolute;top:3.25in;left:0;width:100%;text-align:center;font-weight:bold;text-transform:uppercase">${esc(title)}</div>
-        ${scriptTitleEl.dataset.author ? `
-        <div style="position:absolute;top:3.59in;left:0;width:100%;text-align:center">Escrito por</div>
-        <div style="position:absolute;top:3.95in;left:0;width:100%;text-align:center">${esc(scriptTitleEl.dataset.author)}</div>` : ''}
-        ${contact.length ? `<div style="position:absolute;top:8.83in;left:4.96in">${contact.map(esc).join('<br>')}</div>` : ''}`;
+        <div style="position:absolute;top:3.25in;left:1in;right:1in;text-align:center;font-weight:bold;text-transform:uppercase">${esc(title)}</div>
+        ${creditHTML}
+        ${contactHTML}`;
 }
 
 // Construye la portada como un elemento de página independiente (8.5x11in) para capturarla en el PDF
@@ -629,6 +790,8 @@ function updateTitlePreview() {
         el = document.createElement('div');
         el.id = 'title-page-preview';
         el.className = 'titlepage';
+        el.title = 'Clic para editar la portada';
+        el.addEventListener('click', openTitlePageEditor);
         pagesContainer.insertBefore(el, pagesContainer.firstChild);
     } else if (pagesContainer.firstChild !== el) {
         pagesContainer.insertBefore(el, pagesContainer.firstChild);
@@ -702,7 +865,7 @@ btnExportFountain.addEventListener('click', () => {
     closeMenus();
     const title = scriptTitleEl.value || 'Guion';
     const text = elementsToFountain(htmlToElements(window.getScriptContent()), {
-        title, author: scriptTitleEl.dataset.author, contact: scriptTitleEl.dataset.contact
+        title, credit: scriptTitleEl.dataset.credit, contact: scriptTitleEl.dataset.contact
     });
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
@@ -779,7 +942,9 @@ function htmlToElements(html) {
 function elementsToFountain(elements, meta) {
     const out = [];
     out.push(`Title: ${meta.title}`);
-    if (meta.author) { out.push('Credit: Escrito por'); out.push(`Author: ${meta.author}`); }
+    const credit = (meta.credit || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (credit.length === 1) out.push(`Credit: ${credit[0]}`);
+    else if (credit.length > 1) { out.push(`Credit: ${credit[0]}`); out.push('Author:'); credit.slice(1).forEach(c => out.push(`    ${c}`)); }
     const contact = (meta.contact || '').split('\n').map(x => x.trim()).filter(Boolean);
     if (contact.length) { out.push('Contact:'); contact.forEach(c => out.push(`    ${c}`)); }
     out.push('');

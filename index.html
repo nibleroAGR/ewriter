@@ -73,7 +73,7 @@
                 <div class="logo-small"><i class="fa-solid fa-feather-pointed"></i> eWriter</div>
                 <span class="topbar-sep"></span>
                 <input type="text" id="script-title" class="title-input" placeholder="Selecciona un guion para empezar" disabled>
-                <button id="btn-titlepage" class="btn-icon" title="Portada: autor y contacto" disabled><i class="fa-solid fa-id-card"></i></button>
+                <button id="btn-titlepage" class="btn-icon" title="Editar portada" disabled><i class="fa-solid fa-id-card"></i></button>
             </div>
             <div class="topbar-right">
                 <span id="save-status" class="save-status"><i class="fa-solid fa-cloud"></i> Autoguardado cada 10 min</span>
@@ -196,6 +196,34 @@
         <button id="ctx-rename" class="ctx-item"><i class="fa-solid fa-pen"></i> Renombrar</button>
         <button id="ctx-delete" class="ctx-item delete"><i class="fa-solid fa-trash"></i> Eliminar</button>
     </div>
+
+    <!-- Editor de portada -->
+    <dialog id="titlepage-dialog" class="dialog">
+        <h2 class="dlg-title">Portada</h2>
+        <p class="dlg-text">Cada bloque admite hasta 3 líneas. Déjalo vacío si no lo necesitas.</p>
+
+        <label class="tp-field">
+            <span class="tp-label">Bajo el título <small data-count="credit">0/3 líneas</small></span>
+            <textarea id="tp-credit" rows="3" spellcheck="false" placeholder="Escrito por&#10;Nombre Apellido&#10;Basado en la novela de…"></textarea>
+        </label>
+
+        <label class="tp-field">
+            <span class="tp-label">Abajo a la derecha <small data-count="contact">0/3 líneas</small></span>
+            <textarea id="tp-contact" rows="3" spellcheck="false" placeholder="Versión 2 · Octubre 2026&#10;correo@ejemplo.com&#10;+34 600 000 000"></textarea>
+        </label>
+
+        <div class="dlg-actions">
+            <button id="tp-cancel" type="button" class="btn btn-ghost">Cancelar</button>
+            <button id="tp-save" type="button" class="btn btn-primary">Guardar portada</button>
+        </div>
+    </dialog>
+
+    <!-- Confirmación genérica -->
+    <dialog id="confirm-dialog" class="dialog dialog-sm">
+        <h2 class="dlg-title"></h2>
+        <p class="dlg-text"></p>
+        <div class="dlg-actions"></div>
+    </dialog>
 
     <div id="toast-container" class="toast-container"></div>
 </body>
