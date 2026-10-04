@@ -1,6 +1,6 @@
 // Lógica del Editor de Guiones (Formatos, Atajos y Paginación)
 // pagesContainer ya lo declara app.js (se carga antes) — reutilizamos esa misma variable global.
-const styles = ['slugline', 'action', 'character', 'parenthetical', 'dialogue', 'transition'];
+const styles = ['slugline', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot'];
 
 const flowMap = {
     'slugline': 'action',
@@ -8,7 +8,8 @@ const flowMap = {
     'parenthetical': 'dialogue',
     'dialogue': 'action',
     'action': 'action',
-    'transition': 'slugline'
+    'transition': 'slugline',
+    'shot': 'action'
 };
 
 // Variable global que rastrea exactamente en qué bloque de texto está el usuario
@@ -38,14 +39,17 @@ document.addEventListener('selectionchange', () => {
     }
 });
 
+// elementSelect lo declara app.js (se carga antes)
 function updateActiveButton(className) {
-    document.querySelectorAll('.btn-style').forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.getAttribute('data-type') === className) {
-            btn.classList.add('active');
-        }
-    });
+    const t = styles.includes(className) ? className : 'action';
+    if (elementSelect && elementSelect.value !== t) elementSelect.value = t;
 }
+if (elementSelect) elementSelect.addEventListener('change', () => {
+    applyStyle(elementSelect.value);
+    if (currentFocusBlock && currentFocusBlock.isConnected) caretEnd(currentFocusBlock);
+    const pg = currentFocusBlock && currentFocusBlock.closest('.page');
+    if (pg) checkPagination(pg);
+});
 
 // ==================== APLICAR ESTILO (BOTONES) ====================
 window.applyStyle = function(className) {
@@ -74,12 +78,18 @@ pagesContainer.addEventListener('keydown', (e) => {
     if (!page || page.contentEditable === "false") return;
 
     if (e.key === 'Escape') { clearSg(); return; }
+    if (e.altKey && !e.ctrlKey && /^Digit[1-7]$/.test(e.code)) {
+        e.preventDefault();
+        applyStyle(styles[+e.code.slice(5) - 1]);
+        checkPagination(page);
+        return;
+    }
     if (currentFocusBlock.dataset.sg && !e.ctrlKey && !e.altKey && !e.metaKey) {
         const b = currentFocusBlock, typed = b.textContent, g = b.dataset.sg;
         if ((e.key === 'ArrowRight' && atEnd(b)) || (e.key === ' ' && typed.trim().length >= 3 && !/\s/.test(g.trim()))) {
             e.preventDefault(); b.textContent = typed + g + (e.key === ' ' ? ' ' : ''); clearSg(); caretEnd(b); return;
         }
-        if (e.key === 'Enter') { b.textContent = typed + g; clearSg(); }
+        if (e.key === 'Enter' && !/\s$/.test(g)) { b.textContent = typed + g; clearSg(); }
     }
 
     // TAB: Cambiar estilo cíclicamente
@@ -127,11 +137,25 @@ pagesContainer.addEventListener('keydown', (e) => {
 // ==================== PAGINACIÓN (EL NÚCLEO) ====================
 pagesContainer.addEventListener('beforeinput', () => healAll());
 pagesContainer.addEventListener('input', (e) => {
+    autoConvert(currentFocusBlock);
     const page = e.target.closest('.page');
     if (needAll) flushAll(); else if (page) checkPagination(page);
     clearSg();
     if (currentFocusBlock && /^insert(Composition)?Text$/.test(e.inputType || '')) showSg(currentFocusBlock);
 });
+
+// Asistente de elementos (como Celtx/Trelby):
+//  · "INT. " / "EXT. " al inicio de una acción → encabezado de escena
+//  · "(" en un diálogo o personaje vacío → paréntesis
+function autoConvert(b) {
+    if (!b || !b.isConnected) return;
+    const t = b.textContent.replace(/\u00a0/g, ' ');
+    if ((b.className === 'action' || b.className === 'shot') && /^(int|ext|int\.\/ext|i\/e)\.\s/i.test(t)) {
+        b.className = 'slugline'; updateActiveButton('slugline'); caretEnd(b);
+    } else if ((b.className === 'dialogue' || b.className === 'character') && t === '(') {
+        b.className = 'parenthetical'; b.innerHTML = '<br>'; updateActiveButton('parenthetical'); caretEnd(b);
+    }
+}
 
 // Función para guardar y restaurar el caret
 function saveCaret() {
@@ -157,7 +181,14 @@ window.reflowPagination = function(startPage) {
 
 // ==================== SUGERENCIAS, (MORE)/(CONT'D) Y GUARDADO LIMPIO ====================
 let needAll = false, splitSeq = 0, cpDepth = 0, cpCaret = null;
-const SG_MIN = { character: 1, slugline: 2, parenthetical: 2, transition: 2 };
+const SG_MIN = { character: 1, slugline: 1, parenthetical: 2, transition: 2, shot: 2 };
+const SG_DEFAULTS = {
+    slugline: ['INT. ', 'EXT. ', 'INT./EXT. '],
+    transition: ['CORTE A:', 'FUNDIDO A:', 'FUNDIDO A NEGRO.', 'DISOLVENCIA A:', 'FUNDIDO DE ENTRADA:'],
+    shot: ['PRIMER PLANO DE ', 'PLANO GENERAL', 'PLANO DETALLE DE ', 'PLANO MEDIO', 'POV DE ', 'INSERTO'],
+    parenthetical: ['continúa', 'en off', 'V.O.', 'O.S.', 'pausa']
+};
+const TIMES_OF_DAY = ['DÍA', 'NOCHE', 'AMANECER', 'ATARDECER', 'CONTINUO', 'MÁS TARDE', 'MOMENTOS DESPUÉS'];
 
 function caretEnd(b) { const r = document.createRange(); r.selectNodeContents(b); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 function caretAt(b, off) {
@@ -269,7 +300,7 @@ window.getScriptContent = function () {
         const p = tmp.querySelector(`[data-part="${k.dataset.cont}"]`);
         if (p) p.append(...k.childNodes); k.remove();
     });
-    tmp.querySelectorAll('[data-part],[data-cd],[data-sg]').forEach(x => { x.removeAttribute('data-part'); x.removeAttribute('data-cd'); x.removeAttribute('data-sg'); });
+    tmp.querySelectorAll('[data-part],[data-cd],[data-sg],[data-flash]').forEach(x => { x.removeAttribute('data-part'); x.removeAttribute('data-cd'); x.removeAttribute('data-sg'); x.removeAttribute('data-flash'); });
     return tmp.innerHTML;
 };
 
@@ -288,7 +319,18 @@ function showSg(b) {
         const k = v.toUpperCase(), o = cnt.get(k); cnt.set(k, { v, n: (o ? o.n : 0) + 1 });
     });
     cnt.forEach((o, k) => { if (k.length > U.length && k.startsWith(U) && o.n > bn) { best = o; bn = o.n; } });
-    if (best) b.dataset.sg = best.v.slice(typed.length);
+    if (best) { b.dataset.sg = best.v.slice(typed.length); return; }
+    // Momento del día tras " - " en un encabezado
+    if (t === 'slugline') {
+        const m = typed.match(/\s[-–]\s*([^-–]*)$/);
+        if (m) {
+            const frag = m[1].toUpperCase();
+            const hit = TIMES_OF_DAY.find(x => x.startsWith(frag) && x.length > frag.length);
+            if (hit && (frag.length || / $/.test(typed))) { b.dataset.sg = hit.slice(frag.length); return; }
+        }
+    }
+    const d = (SG_DEFAULTS[t] || []).find(x => x.toUpperCase().startsWith(U) && x.length > typed.length);
+    if (d) b.dataset.sg = d.slice(typed.length);
 }
 document.addEventListener('selectionchange', () => {
     const g = pagesContainer.querySelector('[data-sg]');
@@ -371,6 +413,7 @@ function updateStats() {
     if (pages.length > 0 && pages[0].contentEditable === "false") {
         ['pages', 'chars', 'scenes', 'objs', 'music'].forEach(k => set(k, 0));
         if (lists) lists.innerHTML = '';
+        renderSceneNav([]);
         return;
     }
     const blocks = [...pagesContainer.querySelectorAll('.page > div')].filter(b => !/auto(more|cue)/.test(b.className));
@@ -395,6 +438,7 @@ function updateStats() {
     set('pages', pages.length); set('chars', chars.size); set('scenes', scenes); set('objs', objs.size); set('music', mus.length);
     const top = m => [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'));
     const sec = (t, rows) => rows.length ? `<h4>${t}</h4>` + rows.map(([a, n]) => `<div class="stat-row"><span>${esc(a)}</span><b>${n}</b></div>`).join('') : '';
+    renderSceneNav(blocks);
     if (lists) lists.innerHTML = sec('Personajes', top(chars)) + sec('Objetos', top(objs).map(([a, n]) => [a, '×' + n])) + sec('Música', mus.map(m => [m, '']));
 }
 window.updateStats = updateStats;
@@ -403,3 +447,36 @@ const observer = new MutationObserver(() => {
     updateStats();
 });
 observer.observe(pagesContainer, { childList: true, subtree: true, characterData: true });
+
+// ==================== NAVEGADOR DE ESCENAS ====================
+let sceneNavKey = '';
+function renderSceneNav(blocks) {
+    const list = document.getElementById('scene-list'); if (!list) return;
+    const scenes = blocks.filter(b => b.className === 'slugline');
+    const key = scenes.map(b => b.textContent).join('\u0001');
+    const count = document.getElementById('scene-count'); if (count) count.textContent = scenes.length;
+    if (key === sceneNavKey) return; // evita repintar en cada tecla si no cambian las escenas
+    sceneNavKey = key;
+    list.innerHTML = scenes.length ? '' : '<p class="empty-list">Las escenas aparecen aquí al escribir encabezados (INT. / EXT.).</p>';
+    scenes.forEach((b, i) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${esc(b.textContent.trim() || 'Escena sin título')}</span>`;
+        li.title = b.textContent.trim();
+        li.addEventListener('click', () => {
+            const target = pagesContainer.querySelectorAll('.page > .slugline')[i];
+            if (!target) return;
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            caretEnd(target); currentFocusBlock = target; updateActiveButton('slugline');
+            target.dataset.flash = 1; setTimeout(() => delete target.dataset.flash, 700);
+        });
+        list.appendChild(li);
+    });
+}
+// Marca la escena en la que está el cursor
+document.addEventListener('selectionchange', () => {
+    const list = document.getElementById('scene-list'); if (!list || !currentFocusBlock || !currentFocusBlock.isConnected) return;
+    const all = [...pagesContainer.querySelectorAll('.page > div')];
+    const idx = all.indexOf(currentFocusBlock); let n = -1;
+    for (let i = 0; i <= idx; i++) if (all[i].className === 'slugline') n++;
+    [...list.children].forEach((li, i) => li.classList.toggle('current', i === n));
+});

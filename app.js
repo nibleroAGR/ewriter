@@ -14,6 +14,8 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
+const escHTML = t => { const d = document.createElement('i'); d.textContent = t == null ? '' : String(t); return d.innerHTML; };
+
 // Estado Global
 let currentUser = null;
 let currentScriptId = null;
@@ -31,18 +33,79 @@ const scriptTitleEl = document.getElementById('script-title');
 const btnTitlePage = document.getElementById('btn-titlepage');
 const btnSave = document.getElementById('btn-save');
 const btnExportPdf = document.getElementById('btn-export-pdf');
+const btnExport = document.getElementById('btn-export');
+const btnExportFountain = document.getElementById('btn-export-fountain');
+const elementSelect = document.getElementById('element-select');
+const btnGoogle = document.getElementById('btn-google');
 const saveStatus = document.getElementById('save-status');
 
 // ==================== AUTHENTICATION ====================
+// La sesión se mantiene al cerrar el navegador (cada cuenta ve solo sus guiones).
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Mensajes claros para los errores más habituales
+function authMessage(error) {
+    const map = {
+        'auth/operation-not-supported-in-this-environment': 'El acceso con Google no funciona abriendo el archivo directamente (file://). Abre la app desde un servidor: Firebase Hosting o un servidor local (http://localhost).',
+        'auth/unauthorized-domain': 'Este dominio no está autorizado. Añádelo en Firebase › Authentication › Settings › Authorized domains.',
+        'auth/operation-not-allowed': 'Este método de acceso está desactivado. Actívalo en Firebase › Authentication › Sign-in method.',
+        'auth/popup-closed-by-user': 'Se cerró la ventana de Google antes de terminar. Inténtalo de nuevo.',
+        'auth/cancelled-popup-request': '',
+        'auth/account-exists-with-different-credential': 'Ese correo ya tiene cuenta con otro método. Entra con correo y contraseña.',
+        'auth/wrong-password': 'Contraseña incorrecta.',
+        'auth/email-already-in-use': 'Ese correo ya tiene cuenta, pero la contraseña no coincide. Si la creaste con Google, usa «Continuar con Google».',
+        'auth/weak-password': 'La contraseña debe tener al menos 6 caracteres.',
+        'auth/invalid-email': 'El correo no es válido.',
+        'auth/too-many-requests': 'Demasiados intentos. Espera un momento y vuelve a probar.',
+        'auth/network-request-failed': 'Sin conexión con el servidor. Revisa tu conexión a internet.'
+    };
+    return error.code in map ? map[error.code] : (error.message || 'Error desconocido');
+}
+
+// Crea o actualiza el perfil del usuario en users/{uid}
+async function upsertUserProfile(user) {
+    try {
+        await db.doc(`users/${user.uid}`).set({
+            uid: user.uid,
+            displayName: user.displayName || '',
+            email: user.email || '',
+            photoURL: user.photoURL || '',
+            providers: user.providerData.map(p => p.providerId),
+            lastLoginAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+    } catch (e) { console.warn('No se pudo actualizar el perfil', e); }
+}
+
+function renderUserChip(user) {
+    const name = user.displayName || (user.email || '').split('@')[0] || 'Usuario';
+    document.getElementById('user-name').textContent = name;
+    document.getElementById('user-email').textContent = user.email || '';
+    const img = document.getElementById('user-avatar');
+    const initial = document.getElementById('user-initial');
+    if (user.photoURL) {
+        img.src = user.photoURL; img.referrerPolicy = 'no-referrer';
+        img.classList.remove('hidden'); initial.classList.add('hidden');
+    } else {
+        img.classList.add('hidden'); initial.classList.remove('hidden');
+        initial.textContent = name.charAt(0).toUpperCase();
+    }
+}
+
 auth.onAuthStateChanged((user) => {
     if (user) {
         currentUser = user;
         loginSection.classList.add('hidden');
         appSection.classList.remove('hidden');
+        renderUserChip(user);
+        upsertUserProfile(user);
         loadData();
     } else {
         currentUser = null;
-        currentScriptId = null;
+        resetEditor();
+        allScripts = []; allFolders = [];
         loginSection.classList.remove('hidden');
         appSection.classList.add('hidden');
         if (scriptsUnsubscribe) scriptsUnsubscribe();
@@ -50,31 +113,57 @@ auth.onAuthStateChanged((user) => {
     }
 });
 
+// Resultado de un acceso por redirección (cuando el navegador bloquea la ventana emergente)
+auth.getRedirectResult().catch(err => {
+    if (err && err.code) authError.textContent = authMessage(err);
+});
+
+btnGoogle.addEventListener('click', async () => {
+    authError.textContent = '';
+    if (location.protocol === 'file:') {
+        authError.textContent = authMessage({ code: 'auth/operation-not-supported-in-this-environment' });
+        return;
+    }
+    btnGoogle.disabled = true;
+    try {
+        await auth.signInWithPopup(googleProvider);
+        showToast('Sesión iniciada con Google', 'success');
+    } catch (error) {
+        if (error.code === 'auth/popup-blocked') {
+            await auth.signInWithRedirect(googleProvider);
+            return;
+        }
+        authError.textContent = authMessage(error);
+    } finally {
+        btnGoogle.disabled = false;
+    }
+});
+
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const email = document.getElementById('email').value;
+    const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
     authError.textContent = '';
 
     try {
         await auth.signInWithEmailAndPassword(email, password);
-        showToast('Sesión iniciada correctamente', 'success');
+        showToast('Sesión iniciada', 'success');
     } catch (error) {
-        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+        if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential' || error.code === 'auth/invalid-login-credentials') {
             try {
                 await auth.createUserWithEmailAndPassword(email, password);
-                showToast('Cuenta creada e iniciada', 'success');
+                showToast('Cuenta creada', 'success');
             } catch (createError) {
-                authError.textContent = 'Error al crear cuenta: ' + createError.message;
+                authError.textContent = authMessage(createError);
             }
         } else {
-            authError.textContent = 'Error al iniciar sesión: ' + error.message;
+            authError.textContent = authMessage(error);
         }
     }
 });
 
-document.getElementById('btn-logout').addEventListener('click', () => {
-    saveScript(); // Intentar guardar antes de salir
+document.getElementById('btn-logout').addEventListener('click', async () => {
+    await saveScript(); // Guardar antes de salir
     auth.signOut();
 });
 
@@ -116,6 +205,7 @@ function renderUI() {
     activeScripts.forEach(script => {
         scriptListEl.appendChild(createScriptElement(script));
     });
+    if (!activeScripts.length) scriptListEl.innerHTML = '<p class="empty-list">Aún no tienes guiones. Pulsa «Nuevo guion» para empezar.</p>';
 
     // 2. Renderizar Carpetas en Archivo
     allFolders.forEach(folder => {
@@ -139,7 +229,7 @@ function createScriptElement(script) {
     div.className = `script-item ${currentScriptId === script.id ? 'active' : ''}`;
     div.draggable = true;
     div.innerHTML = `
-        <span>${script.title || 'Sin Título'}</span>
+        <span>${escHTML(script.title || 'Sin título')}</span>
         <i class="fa-solid fa-trash btn-icon" style="padding:4px; font-size:0.8rem; color:#ef4444;" data-id="${script.id}"></i>
     `;
     
@@ -183,7 +273,7 @@ function createFolderElement(folder) {
         <div class="folder-header">
             <div class="folder-title">
                 <i class="fa-solid fa-folder"></i> 
-                <span>${folder.name}</span>
+                <span>${escHTML(folder.name)}</span>
             </div>
             <i class="fa-solid fa-chevron-down" style="font-size:0.7rem; color:#94a3b8;"></i>
         </div>
@@ -383,17 +473,13 @@ document.addEventListener('DOMContentLoaded', () => {
 document.getElementById('btn-new-script').addEventListener('click', async () => {
     if (!currentUser) return;
     
-    const newRef = db.collection(`users/${currentUser.uid}/scripts`);
-    const docRef = await newRef.add({
-        title: 'Nuevo Guion',
-        content: '<div class="slugline">INT. ESCENA - DÍA</div><div class="action">Describe la acción...</div>',
-        author: currentUser.displayName || '',
-        contact: '',
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    
-    openScript(docRef.id, { title: 'Nuevo Guion', content: '<div class="slugline">INT. ESCENA - DÍA</div><div class="action">Describe la acción...</div>' });
+    const content = '<div class="transition">FUNDIDO DE ENTRADA:</div><div class="slugline">INT. LUGAR - DÍA</div><div class="action">Describe la acción...</div>';
+    const data = {
+        ...newScriptDoc('Nuevo guion', content),
+        author: currentUser.displayName || ''
+    };
+    const docRef = await db.collection(`users/${currentUser.uid}/scripts`).add(data);
+    openScript(docRef.id, data);
 });
 
 function openScript(id, data) {
@@ -423,7 +509,8 @@ function openScript(id, data) {
     btnTitlePage.disabled = false;
     updateTitlePreview();
     btnSave.disabled = false;
-    btnExportPdf.disabled = false;
+    btnExport.disabled = false;
+    elementSelect.disabled = false;
     
     // Resaltar el activo en la lista
     document.querySelectorAll('.script-item').forEach(item => item.classList.remove('active'));
@@ -441,7 +528,7 @@ function resetEditor() {
     currentScriptId = null;
     pagesContainer.innerHTML = `
         <div class="page" id="editor" contenteditable="false" spellcheck="false">
-            <div style="text-align: center; color: #999; margin-top: 50px; font-family: sans-serif;">⬅️ Selecciona o crea un guion en el menú lateral.</div>
+            <div class="empty-hint">Abre un guion de la lista o crea uno nuevo.</div>
         </div>
     `;
     scriptTitleEl.value = '';
@@ -450,7 +537,8 @@ function resetEditor() {
     scriptTitleEl.disabled = true;
     btnTitlePage.disabled = true;
     btnSave.disabled = true;
-    btnExportPdf.disabled = true;
+    btnExport.disabled = true;
+    elementSelect.disabled = true;
     stopAutoSave();
     if(window.updateStats) window.updateStats();
 }
@@ -465,11 +553,21 @@ async function saveScript() {
     
     try {
         saveStatus.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando...';
+        const elements = htmlToElements(content);
         await db.doc(`users/${currentUser.uid}/scripts/${currentScriptId}`).update({
             title: title,
-            content: content,
+            content: content,                 // HTML (conserva negrita/cursiva)
+            elements: elements,               // Estructura estándar: [{ type, text }]
             author: scriptTitleEl.dataset.author || '',
             contact: scriptTitleEl.dataset.contact || '',
+            format: 'screenplay',
+            schemaVersion: 2,
+            ownerId: currentUser.uid,
+            stats: {
+                pages: pagesContainer.querySelectorAll('.page').length,
+                scenes: elements.filter(e => e.type === 'slugline').length,
+                words: elements.reduce((n, e) => n + (e.text.match(/\S+/g) || []).length, 0)
+            },
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         });
         
@@ -577,22 +675,42 @@ async function exportScriptPdf(title) {
 // Botón Exportar PDF
 btnExportPdf.addEventListener('click', async () => {
     if (!currentScriptId) return;
-
-    btnExportPdf.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando...';
-    btnExportPdf.disabled = true;
+    closeMenus();
+    const label = btnExport.innerHTML;
+    btnExport.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generando PDF…';
+    btnExport.disabled = true;
 
     const title = scriptTitleEl.value || 'Guion';
+    const wasDark = document.body.classList.contains('dark');
+    document.body.classList.remove('dark'); // el PDF siempre en papel blanco
 
     try {
         await exportScriptPdf(title);
-        showToast('PDF Exportado correctamente', 'success');
+        showToast('PDF exportado', 'success');
     } catch (e) {
         console.error("Error al exportar PDF: ", e);
-        showToast('Error al exportar PDF', 'error');
+        showToast('No se pudo exportar el PDF', 'error');
     } finally {
-        btnExportPdf.innerHTML = '<i class="fa-solid fa-file-pdf"></i> Exportar PDF';
-        btnExportPdf.disabled = false;
+        if (wasDark) document.body.classList.add('dark');
+        btnExport.innerHTML = label;
+        btnExport.disabled = false;
     }
+});
+
+btnExportFountain.addEventListener('click', () => {
+    if (!currentScriptId) return;
+    closeMenus();
+    const title = scriptTitleEl.value || 'Guion';
+    const text = elementsToFountain(htmlToElements(window.getScriptContent()), {
+        title, author: scriptTitleEl.dataset.author, contact: scriptTitleEl.dataset.contact
+    });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${title}.fountain`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    showToast('Fountain exportado', 'success');
 });
 
 // Autoguardado cada 10 min
@@ -624,3 +742,100 @@ function showToast(message, type = 'info') {
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
+
+// ==================== ESTRUCTURA DEL GUION ====================
+// Igual que los editores online (Celtx, WriterDuet, Fountain): el guion es una lista
+// ordenada de elementos, cada uno con su tipo y su texto.
+const ELEMENT_TYPES = ['slugline', 'action', 'character', 'parenthetical', 'dialogue', 'transition', 'shot'];
+
+function newScriptDoc(title, content) {
+    return {
+        title,
+        content,
+        elements: htmlToElements(content),
+        author: '',
+        contact: '',
+        format: 'screenplay',
+        schemaVersion: 2,
+        ownerId: currentUser.uid,
+        isArchived: false,
+        folderId: null,
+        stats: { pages: 1, scenes: 0, words: 0 },
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+}
+
+function htmlToElements(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html || '';
+    return [...tmp.children].map(el => {
+        const type = ELEMENT_TYPES.find(t => el.classList.contains(t)) || 'action';
+        return { type, text: el.textContent.replace(/\u00a0/g, ' ').trim() };
+    }).filter(e => e.text);
+}
+
+// Convierte a Fountain (formato de texto abierto que importan Final Draft, Highland, WriterDuet, etc.)
+function elementsToFountain(elements, meta) {
+    const out = [];
+    out.push(`Title: ${meta.title}`);
+    if (meta.author) { out.push('Credit: Escrito por'); out.push(`Author: ${meta.author}`); }
+    const contact = (meta.contact || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (contact.length) { out.push('Contact:'); contact.forEach(c => out.push(`    ${c}`)); }
+    out.push('');
+
+    const sceneRx = /^(INT|EXT|EST|INT\.?\/EXT|I\/E)[\.\s]/i;
+    elements.forEach((e, i) => {
+        const prev = elements[i - 1];
+        const inDialogue = prev && /^(character|parenthetical|dialogue)$/.test(prev.type) && /^(parenthetical|dialogue)$/.test(e.type);
+        if (!inDialogue && out.length) out.push('');
+        const t = e.text;
+        switch (e.type) {
+            case 'slugline': out.push(sceneRx.test(t) ? t.toUpperCase() : '.' + t.toUpperCase()); break;
+            case 'character': out.push((/[A-ZÁÉÍÓÚÑÜ]/i.test(t) ? '' : '@') + t.toUpperCase()); break;
+            case 'parenthetical': out.push(`(${t.replace(/^\(|\)$/g, '')})`); break;
+            case 'dialogue': out.push(t); break;
+            case 'transition': out.push(/TO:$/i.test(t) ? t.toUpperCase() : '> ' + t.toUpperCase()); break;
+            case 'shot': out.push(t.toUpperCase()); break;
+            default: out.push(t === t.toUpperCase() && /[A-Z]/.test(t) ? '!' + t : t);
+        }
+    });
+    return out.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
+}
+
+// ==================== INTERFAZ: menús, pestañas, tema, atajos ====================
+function closeMenus() { document.querySelectorAll('.dropdown').forEach(m => m.classList.add('hidden')); }
+function toggleMenu(btnId, menuId) {
+    document.getElementById(btnId).addEventListener('click', (e) => {
+        e.stopPropagation();
+        const m = document.getElementById(menuId), open = m.classList.contains('hidden');
+        closeMenus(); if (open) m.classList.remove('hidden');
+    });
+}
+toggleMenu('btn-export', 'export-menu');
+toggleMenu('user-chip', 'user-menu');
+document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown')) closeMenus(); });
+
+document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', p.dataset.panel !== tab.dataset.tab));
+}));
+
+const btnTheme = document.getElementById('btn-theme');
+function applyTheme(dark) {
+    document.body.classList.toggle('dark', dark);
+    btnTheme.innerHTML = dark ? '<i class="fa-solid fa-sun"></i> Modo claro' : '<i class="fa-solid fa-moon"></i> Modo oscuro';
+    try { localStorage.setItem('ewriter-theme', dark ? 'dark' : 'light'); } catch (e) {}
+}
+try { applyTheme(localStorage.getItem('ewriter-theme') === 'dark'); } catch (e) {}
+btnTheme.addEventListener('click', () => { applyTheme(!document.body.classList.contains('dark')); closeMenus(); });
+
+document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (currentScriptId) { saveScript(); showToast('Guion guardado', 'success'); }
+    }
+});
+
+// Guardar al cerrar la pestaña (mejor esfuerzo)
+window.addEventListener('beforeunload', () => { if (currentScriptId) saveScript(); });
